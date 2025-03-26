@@ -1,8 +1,8 @@
 global:
   environment: development
   image:
-    registryPath: gcr.io/your-project-id  # Registry, e.g. Docker Hub, GCR, ECR, etc.
-    pullPolicy: Always
+    registryPath: registry.kube-system.svc.cluster.local:5000  # Local registry on Minikube
+    pullPolicy: IfNotPresent
   secrets:
     useExternalSecrets: true  # Set this to true to use external secrets
     name: "hra-secrets"  # E.g., from `kubectl create secret generic hra-secrets ..`
@@ -11,6 +11,24 @@ global:
       adminPassword: "your-password-here"  # Set it here unless useExternalSecrets is true
     openai:
       apiKey: "sk-proj-999"  # Set it here unless useExternalSecrets is true
+  vault:
+    enabled: true  # Set to true to use Vault for secrets
+    role: "haystack-rag"  # Role for Vault authentication
+    serviceAccount: "haystack-rag"  # Service account for Vault authentication
+    secrets:
+      - name: "opensearch"
+        path: "kv/data/haystack-rag/opensearch"
+        template: |
+          {{- with secret "kv/data/haystack-rag/opensearch" -}}
+          export OPENSEARCH_USER="{{ .Data.data.adminUser }}"
+          export OPENSEARCH_PASSWORD="{{ .Data.data.adminPassword }}"
+          {{- end -}}
+      - name: "openai"
+        path: "kv/data/haystack-rag/openai"
+        template: |
+          {{- with secret "kv/data/haystack-rag/openai" -}}
+          export OPENAI_API_KEY="{{ .Data.data.apiKey }}"
+          {{- end -}}
 
 search:
   opensearch:
@@ -20,6 +38,7 @@ search:
       imageName: opensearch
       tag: "2.18.0"
       pullPolicy: IfNotPresent
+    vaultCommand: "source /vault/secrets/opensearch && /usr/share/opensearch/bin/opensearch"
     securityContext:
       runAsUser: 1000
     podSecurityContext:
@@ -45,7 +64,7 @@ search:
         ephemeral-storage: "4Gi"
     volumeClaimTemplates:
       size: 30Gi
-      storageClass: standard-rwo-regional  # GKE storage class
+      storageClass: standard  # Default storage class for Minikube
     config:
       javaOpts: "-Xms512m -Xmx512m"
     readinessProbe:
@@ -70,6 +89,7 @@ backend:
     image:
       imageName: hra-indexing
       tag: latest
+    vaultCommand: "source /vault/secrets/opensearch && source /vault/secrets/openai && uvicorn indexing.main:app --host 0.0.0.0 --port 8001"
     service:
       ports:
         - port: 8001
@@ -107,6 +127,7 @@ backend:
     image:
       imageName: hra-query
       tag: latest
+    vaultCommand: "source /vault/secrets/opensearch && source /vault/secrets/openai && uvicorn query.main:app --host 0.0.0.0 --port 8002"
     service:
       ports:
         - port: 8002
@@ -214,7 +235,7 @@ apiGateway:
       memory: "512Mi"
 
 ingress:
-  enabled: false
+  enabled: true
   className: nginx
   annotations:
     nginx.ingress.kubernetes.io/client-max-body-size: "100m"
@@ -223,7 +244,7 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300s"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "10m"
   hosts:
-    - host: ""
+    - host: "rag.local"
       paths:
         - path: /
           service: gateway-api-gw
@@ -233,14 +254,16 @@ ingress:
 gkeGateway:
   enabled: false
   hosts:
+    - host: "example.com"  # Default host, should be overridden in environment-specific values
   routes:
     - path: /
       service: gateway-api-gw
       port: 8080
+      namespace: default
 
 persistence:
   fileStorage:
     enabled: true
     size: 30Gi
-    storageClass: standard-rwo-regional  # GKE storage class
+    storageClass: standard  # Default storage class for Minikube
     accessMode: ReadWriteOnce # Only indexing pod writes!

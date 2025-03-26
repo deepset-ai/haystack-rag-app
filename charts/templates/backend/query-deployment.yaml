@@ -19,12 +19,28 @@ spec:
         {{- include "app.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: query
         app.kubernetes.io/group: backend
+      {{- if .Values.global.vault.enabled }}
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.global.vault.role | quote }}
+        {{- range .Values.global.vault.secrets }}
+        vault.hashicorp.com/agent-inject-secret-{{ .name }}: {{ .path | quote }}
+        vault.hashicorp.com/agent-inject-template-{{ .name }}: {{ .template | quote }}
+        {{- end }}
+      {{- end }}
     spec:
       {{- include "common.opensearch.initContainer" . | nindent 6 }}
       containers:
       - name: query
         image: "{{ .Values.global.image.registryPath }}/{{ .Values.backend.query.image.imageName }}:{{ .Values.backend.query.image.tag }}"
         imagePullPolicy: {{ default .Values.global.image.pullPolicy .Values.backend.query.image.pullPolicy }}
+        {{- if .Values.global.vault.enabled }}
+        command:
+          - sh
+          - -c
+        args:
+          - {{ .Values.backend.query.vaultCommand }}
+        {{- end }}
         ports:
           {{- if .Values.backend.query.service.ports }}
           - name: {{ (index .Values.backend.query.service.ports 0).name | default "http" }}
@@ -45,6 +61,7 @@ spec:
         resources:
           {{- toYaml . | nindent 10 }}
         {{- end }}
+        {{- if not .Values.global.vault.enabled }}
         env:
           - name: OPENSEARCH_USER
             valueFrom:
@@ -73,6 +90,7 @@ spec:
                 {{- include "app.fullname" . }}-secrets
               {{- end }}
                 key: openai-api-key
+        {{- end }}
         envFrom:
           - configMapRef:
               name: {{ include "app.fullname" . }}-backend-config

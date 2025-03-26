@@ -1,5 +1,5 @@
 {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$schema": "https://json-schema.org/draft-07/schema",
     "type": "object",
     "required": ["global", "search", "backend", "frontend", "apiGateway", "ingress", "gkeGateway", "persistence"],
     "properties": {
@@ -41,6 +41,27 @@
                 "required": ["apiKey"],
                 "properties": {
                   "apiKey": { "type": "string" }
+                }
+              },
+              "vault": {
+                "type": "object",
+                "required": ["enabled", "role", "serviceAccount", "secrets"],
+                "properties": {
+                  "enabled": { "type": "boolean" },
+                  "role": { "type": "string" },
+                  "serviceAccount": { "type": "string" },
+                  "secrets": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["name", "path", "template"],
+                      "properties": {
+                        "name": { "type": "string" },
+                        "path": { "type": "string" },
+                        "template": { "type": "string" }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -157,6 +178,7 @@
                   "failureThreshold": { "type": "integer" }
                 }
               },
+              "vaultCommand": { "type": "string" },
               "resources": {
                 "type": "object",
                 "required": ["requests", "limits"],
@@ -350,6 +372,7 @@
               "tag": { "type": "string" }
             }
           },
+          "vaultCommand": { "type": "string" },
           "service": {
             "type": "object",
             "required": ["ports", "type"],

@@ -24,6 +24,15 @@ spec:
         {{- include "app.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: opensearch
         app.kubernetes.io/group: search
+      {{- if .Values.global.vault.enabled }}
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.global.vault.role | quote }}
+        {{- range .Values.global.vault.secrets }}
+        vault.hashicorp.com/agent-inject-secret-{{ .name }}: {{ .path | quote }}
+        vault.hashicorp.com/agent-inject-template-{{ .name }}: {{ .template | quote }}
+        {{- end }}
+      {{- end }}
     spec:
       {{- with .Values.search.opensearch.podSecurityContext }}
       securityContext:
@@ -37,6 +46,13 @@ spec:
         {{- end }}
         image: "opensearchproject/{{ .Values.search.opensearch.image.imageName }}:{{ .Values.search.opensearch.image.tag }}"
         imagePullPolicy: {{ .Values.search.opensearch.image.pullPolicy }}
+        {{- if .Values.global.vault.enabled }}
+        command:
+          - sh
+          - -c
+        args:
+          - {{ .Values.search.opensearch.vaultCommand }}
+        {{- end }}
         env:
         - name: discovery.type
           value: single-node
@@ -46,6 +62,7 @@ spec:
           value: {{ .Values.search.opensearch.config.javaOpts | quote }}
         - name: OPENSEARCH_SECURITY_ENABLED
           value: "true"
+        {{- if not .Values.global.vault.enabled }}
         - name: OPENSEARCH_INITIAL_ADMIN_USER
           valueFrom:
             secretKeyRef:
@@ -64,6 +81,7 @@ spec:
                 {{- include "app.fullname" . }}-secrets
               {{- end }}
               key: opensearch-password
+        {{- end }}
         ports:
         {{- if .Values.search.opensearch.service.ports }}
         {{- range .Values.search.opensearch.service.ports }}
