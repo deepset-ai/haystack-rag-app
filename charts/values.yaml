@@ -232,7 +232,8 @@ ingress:
 
 gkeGateway:
   enabled: false
-  hosts:
+  hosts: 
+    - host: ""
   routes:
     - path: /
       service: gateway-api-gw
