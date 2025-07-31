@@ -1,0 +1,700 @@
+---
+# Source: hra/templates/api-gateway.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haystack-rag-app-hra-gateway-api-gw-config
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: api-gw
+    app.kubernetes.io/group: gateway
+data:
+  nginx.conf: |
+    server {
+        listen 8080 default_server;
+        server_name _;
+
+        client_max_body_size 100M;
+        client_body_timeout 120s;
+
+        proxy_connect_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 10m;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        error_page 500 501 502 503 504 = @error5xx;
+
+        location = /api {
+            default_type application/json;
+            return 200 '{"message": "API root. Please use a specific endpoint."}';
+        }
+
+        location /api/ {
+            location /api/files {
+                proxy_pass http://haystack-rag-app-hra-backend-indexing:8001/files;
+            }
+
+            location /api/search {
+                proxy_pass http://haystack-rag-app-hra-backend-query:8002/search;
+            }
+
+            location = /api/health {
+                return 200 '{"status": "ok"}';
+            }
+
+            default_type application/json;
+            return 200 '{"message": "API root or non-existent endpoint. Please use a specific, valid endpoint."}';
+        }
+
+        location / {
+            proxy_pass http://haystack-rag-app-hra-frontend:3000/;
+        }
+
+        location @error5xx {
+            default_type application/json;
+            return 500 '{"error": "Internal Server Error", "status": 500}';
+        }
+    }
+---
+# Source: hra/templates/config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haystack-rag-app-hra-backend-config
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/group: backend
+data:
+  PYTHONUNBUFFERED: "1"
+  OPENSEARCH_HOST: "https://haystack-rag-app-hra-search-opensearch:9200"
+  GENERATOR: openai
+  USE_OPENAI_EMBEDDER: "false"
+  TOKENIZERS_PARALLELISM: "false"
+  LOG_LEVEL: INFO
+  HAYSTACK_LOG_LEVEL: INFO
+  INDEX_ON_STARTUP: "true"
+---
+# Source: hra/templates/frontend/frontend-deployment.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haystack-rag-app-hra-frontend-config
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/group: frontend
+data:
+  nginx.conf: |
+    server {
+        listen 3000 default_server;
+        server_name _;
+
+        client_max_body_size 100M;
+
+        location / {
+            root   /usr/share/nginx/html;
+            index  index.html index.htm;
+            try_files $uri $uri/ /index.html;
+        }
+
+        error_page   500 502 503 504  /50x.html;
+        location = /50x.html {
+            root   /usr/share/nginx/html;
+        }
+    }
+---
+# Source: hra/templates/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: haystack-rag-app-hra-file-storage
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/group: backend
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 30Gi
+  storageClassName: standard-rwo-regional
+---
+# Source: hra/templates/api-gateway.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: haystack-rag-app-hra-gateway-api-gw
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: api-gw
+    app.kubernetes.io/group: gateway
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/component: api-gw
+    app.kubernetes.io/group: gateway
+---
+# Source: hra/templates/backend/indexing-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: haystack-rag-app-hra-backend-indexing
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: indexing
+    app.kubernetes.io/group: backend
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8001
+      targetPort: 8001
+      name: indexing-api
+  selector:
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/component: indexing
+    app.kubernetes.io/group: backend
+---
+# Source: hra/templates/backend/query-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: haystack-rag-app-hra-backend-query
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: query
+    app.kubernetes.io/group: backend
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8002
+      targetPort: 8002
+      name: query-api
+  selector:
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/component: query
+    app.kubernetes.io/group: backend
+---
+# Source: hra/templates/frontend/frontend-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: haystack-rag-app-hra-frontend
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/group: frontend
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: react-app
+  selector:
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/group: frontend
+---
+# Source: hra/templates/search/opensearch-statefulset.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: haystack-rag-app-hra-search-opensearch
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: opensearch
+    app.kubernetes.io/group: search
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: 9200
+      targetPort: 9200
+      name: rest-api
+    - port: 9600
+      targetPort: 9600
+      name: performance
+  selector:
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/component: opensearch
+    app.kubernetes.io/group: search
+---
+# Source: hra/templates/api-gateway.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haystack-rag-app-hra-gateway-api-gw
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: api-gw
+    app.kubernetes.io/group: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hra
+      app.kubernetes.io/instance: haystack-rag-app
+      app.kubernetes.io/component: api-gw
+      app.kubernetes.io/group: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hra
+        app.kubernetes.io/instance: haystack-rag-app
+        app.kubernetes.io/component: api-gw
+        app.kubernetes.io/group: gateway
+    spec:
+      containers:
+      - name: nginx
+        image: "docker.io/library/nginx:alpine"
+        ports:
+          - name: http
+            containerPort: 8080
+        volumeMounts:
+          - name: config
+            mountPath: /etc/nginx/conf.d/default.conf
+            subPath: nginx.conf
+            readOnly: true
+        resources:
+          limits:
+            cpu: 200m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: haystack-rag-app-hra-gateway-api-gw-config
+---
+# Source: hra/templates/backend/indexing-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haystack-rag-app-hra-backend-indexing
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: indexing
+    app.kubernetes.io/group: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hra
+      app.kubernetes.io/instance: haystack-rag-app
+      app.kubernetes.io/component: indexing
+      app.kubernetes.io/group: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hra
+        app.kubernetes.io/instance: haystack-rag-app
+        app.kubernetes.io/component: indexing
+        app.kubernetes.io/group: backend
+    spec:
+      initContainers:
+        - name: wait-for-opensearch
+          image: curlimages/curl-base:8.11.0
+          command: ['sh', '-c', 'until curl -f --insecure -u "${OPENSEARCH_USER}:${OPENSEARCH_PASSWORD}" https://haystack-rag-app-hra-search-opensearch:9200/_cluster/health; do echo "initContainers: waiting for opensearch"; sleep 2; done;']
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          env:
+          - name: OPENSEARCH_USER
+            valueFrom:
+              secretKeyRef:
+                name: hra-secrets
+                key: opensearch-user
+          - name: OPENSEARCH_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: hra-secrets
+                key: opensearch-password
+      containers:
+      - name: indexing
+        image: "gcr.io/your-project-id/hra-indexing:latest"
+        imagePullPolicy: Always
+        ports:
+          - name: indexing-api
+            containerPort: 8001
+        readinessProbe:
+          failureThreshold: 18
+          httpGet:
+            path: /health
+            port: indexing-api
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          failureThreshold: 18
+          httpGet:
+            path: /health
+            port: indexing-api
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+        resources:
+          limits:
+            cpu: 500m
+            ephemeral-storage: 20Gi
+            memory: 2Gi
+          requests:
+            cpu: 250m
+            ephemeral-storage: 10Gi
+            memory: 1Gi
+        env:
+          - name: OPENSEARCH_USER
+            valueFrom:
+              secretKeyRef:
+                name: hra-secrets
+                key: opensearch-user
+          - name: OPENSEARCH_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: hra-secrets
+                key: opensearch-password
+          - name: OPENAI_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: hra-secrets
+                key: openai-api-key
+        envFrom:
+          - configMapRef:
+              name: haystack-rag-app-hra-backend-config
+        volumeMounts:
+          - name: file-storage
+            mountPath: /app/files
+      volumes:
+        - name: file-storage
+          persistentVolumeClaim:
+            claimName: haystack-rag-app-hra-file-storage
+---
+# Source: hra/templates/backend/query-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haystack-rag-app-hra-backend-query
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: query
+    app.kubernetes.io/group: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hra
+      app.kubernetes.io/instance: haystack-rag-app
+      app.kubernetes.io/component: query
+      app.kubernetes.io/group: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hra
+        app.kubernetes.io/instance: haystack-rag-app
+        app.kubernetes.io/component: query
+        app.kubernetes.io/group: backend
+    spec:
+      initContainers:
+        - name: wait-for-opensearch
+          image: curlimages/curl-base:8.11.0
+          command: ['sh', '-c', 'until curl -f --insecure -u "${OPENSEARCH_USER}:${OPENSEARCH_PASSWORD}" https://haystack-rag-app-hra-search-opensearch:9200/_cluster/health; do echo "initContainers: waiting for opensearch"; sleep 2; done;']
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          env:
+          - name: OPENSEARCH_USER
+            valueFrom:
+              secretKeyRef:
+                name: hra-secrets
+                key: opensearch-user
+          - name: OPENSEARCH_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: hra-secrets
+                key: opensearch-password
+      containers:
+      - name: query
+        image: "gcr.io/your-project-id/hra-query:latest"
+        imagePullPolicy: Always
+        ports:
+          - name: query-api
+            containerPort: 8002
+        readinessProbe:
+          failureThreshold: 18
+          httpGet:
+            path: /health
+            port: query-api
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          failureThreshold: 18
+          httpGet:
+            path: /health
+            port: query-api
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+        resources:
+          limits:
+            cpu: 500m
+            ephemeral-storage: 20Gi
+            memory: 2Gi
+          requests:
+            cpu: 250m
+            ephemeral-storage: 10Gi
+            memory: 1Gi
+        env:
+          - name: OPENSEARCH_USER
+            valueFrom:
+              secretKeyRef:
+                name: hra-secrets
+                key: opensearch-user
+          - name: OPENSEARCH_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: hra-secrets
+                key: opensearch-password
+          - name: OPENAI_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: hra-secrets
+                key: openai-api-key
+        envFrom:
+          - configMapRef:
+              name: haystack-rag-app-hra-backend-config
+---
+# Source: hra/templates/frontend/frontend-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haystack-rag-app-hra-frontend
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/group: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hra
+      app.kubernetes.io/instance: haystack-rag-app
+      app.kubernetes.io/component: frontend
+      app.kubernetes.io/group: frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hra
+        app.kubernetes.io/instance: haystack-rag-app
+        app.kubernetes.io/component: frontend
+        app.kubernetes.io/group: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: "gcr.io/your-project-id/hra-frontend:latest"
+        imagePullPolicy: Always
+        ports:
+          - name: react-app
+            containerPort: 3000
+        volumeMounts:
+          - name: config
+            mountPath: /etc/nginx/conf.d/default.conf
+            subPath: nginx.conf
+            readOnly: true
+        readinessProbe:
+          failureThreshold: 5
+          httpGet:
+            path: /
+            port: react-app
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          failureThreshold: 5
+          httpGet:
+            path: /
+            port: react-app
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+        resources:
+          limits:
+            cpu: 200m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: haystack-rag-app-hra-frontend-config
+---
+# Source: hra/templates/search/opensearch-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: haystack-rag-app-hra-search-opensearch
+  labels:
+    helm.sh/chart: hra-0.1.0
+    app.kubernetes.io/name: hra
+    app.kubernetes.io/instance: haystack-rag-app
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: opensearch
+    app.kubernetes.io/group: search
+spec:
+  serviceName: haystack-rag-app-hra-search-opensearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hra
+      app.kubernetes.io/instance: haystack-rag-app
+      app.kubernetes.io/component: opensearch
+      app.kubernetes.io/group: search
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hra
+        app.kubernetes.io/instance: haystack-rag-app
+        app.kubernetes.io/component: opensearch
+        app.kubernetes.io/group: search
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: opensearch
+        securityContext:
+          runAsUser: 1000
+        image: "opensearchproject/opensearch:2.18.0"
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: discovery.type
+          value: single-node
+        - name: bootstrap.memory_lock
+          value: "false"
+        - name: OPENSEARCH_JAVA_OPTS
+          value: "-Xms512m -Xmx512m"
+        - name: OPENSEARCH_SECURITY_ENABLED
+          value: "true"
+        - name: OPENSEARCH_INITIAL_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: hra-secrets
+              key: opensearch-user
+        - name: OPENSEARCH_INITIAL_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: hra-secrets
+              key: opensearch-password
+        ports:
+        - name: rest-api
+          containerPort: 9200
+        - name: performance
+          containerPort: 9600
+        resources:
+          limits:
+            cpu: 1000m
+            ephemeral-storage: 4Gi
+            memory: 4Gi
+          requests:
+            cpu: 500m
+            ephemeral-storage: 2Gi
+            memory: 2Gi
+        volumeMounts:
+        - name: opensearch-data
+          mountPath: /usr/share/opensearch/data
+        readinessProbe:
+          failureThreshold: 10
+          initialDelaySeconds: 90
+          periodSeconds: 10
+          tcpSocket:
+            port: rest-api
+          timeoutSeconds: 10
+        livenessProbe:
+          failureThreshold: 10
+          initialDelaySeconds: 180
+          periodSeconds: 10
+          tcpSocket:
+            port: rest-api
+          timeoutSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: opensearch-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard-rwo-regional
+      resources:
+        requests:
+          storage: 30Gi
